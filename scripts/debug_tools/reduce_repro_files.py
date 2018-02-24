@@ -127,13 +127,12 @@ def reduce_dep(dep_file_abs_path, assert_string, analyzer_command_file, reduced_
                      dep_file_abs_path, '--n', '1'])
 
 
-def get_preprocess_cmd(comp_cmd):
+def get_preprocess_cmd(comp_cmd, repro_dir, filename):
     preproc_cmd = str(comp_cmd.decode("utf-8")).split(' ')
     preproc_cmd = filter(lambda x: not re.match('-c', x), preproc_cmd)
     preproc_cmd.insert(1, '-E')
     out_ind = preproc_cmd.index('-o')
-    del preproc_cmd[out_ind]
-    del preproc_cmd[out_ind]
+    preproc_cmd[out_ind + 1] = os.path.join(repro_dir, filename)
     # preproc_cmd.extend(['>', str(file.decode("utf-8"))])
     return preproc_cmd
 
@@ -163,6 +162,10 @@ def main():
         default='..',
         help="Path of the report dir.")
     parser.add_argument(
+        '--fail-dir',
+        default='./reports/failed',
+        help="Path of the failures dir.")
+    parser.add_argument(
         '--clang',
         required=True,
         help="Path to the clang binary.")
@@ -182,41 +185,52 @@ def main():
             args.clang_plugin_path,
             args.report_dir)
 
-    prepare_all_cmd_for_ctu.prepare(pathOptions)
-    assert_string = get_assertion_string(args.analyzer_command)
-    abs_file_path = get_file_path(args.analyzer_command)
-    preproc_name = get_preprocessed_repro_file(abs_file_path, args.analyzer_command)
-    reduced_orig_file_name = reduce(preproc_name, assert_string, args.analyzer_command, args.j)
-    compile_cmd = json.load(open('./report_debug/compile_cmd.json'))
-
-    out = prepare_all_cmd_for_ctu.execute(["CodeChecker", "analyze", "--ctu-collect",
-                   compile_cmd_debug,
-                   "--compiler-includes-file", compiler_includes_debug,
-                   "--compiler-target-file", compiler_target_debug,
-                   "-o", "report_debug",
-                   "--verbose", "debug"])
-
-    for x in compile_cmd:
-        if not (str(x['file']).endswith('.c') or str(x['file']).endswith('.cpp')):
+    os.chdir(args.fail_dir)
+    for zip_repro in os.listdir(args.fail_dir):
+        if not zip_repro.endswith(".zip"):
             continue
-        preproc = subprocess.Popen(get_preprocess_cmd(x['command']),
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = preproc.communicate()
-        with open(x['file'], 'w') as f:
-            f.write(out)
-    prepare_all_cmd_for_ctu.prepare(pathOptions)
-    for x in compile_cmd:
-        if not (str(x['file']).endswith('.c') or str(x['file']).endswith('.cpp')):
-            continue
-        reduce_dep(str(x['file']), assert_string, args.analyzer_command, reduced_orig_file_name)
+        repro_dir = os.abspath(os.path.join(args.fail_dir, zip_repro.split('.')[0] + "_repro"))
+        subProcess.Popen(['unzip', zip_repro])
+        prepare_all_cmd_for_ctu.prepare(pathOptions)
+        repro_compile_cmd = []
+        compile_cmd = json.load(open('./report_debug/compile_cmd.json'))
+        for x in compile_cmd:
+            if not (str(x['file']).endswith('.c') or str(x['file']).endswith('.cpp')):
+                continue
+            file_name = os.path.basename(x['file'].decode("utf-8"))
+            preproc = subprocess.Popen(get_preprocess_cmd(x['command'], repro_dir, file_name),
+                                       cwd=x['dir'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, err = preproc.communicate()
+            x['dir'] = repro_dir
+            x['file'] = os.path.join(repro_dir, file_name)
+            x['command'] = get_new_cmd(x['command'])
+            # with open(x['file'], 'w') as f:
+            #    f.write(out)
 
-        if os.stat(str(x['file'])).st_size != 0:
-            prepare_all_cmd_for_ctu.prepare(pathOptions)
 
-        #print get_preprocess_cmd(x['command'])
-        #out, err = preproc.communicate()
-        #print err + " :Err, Out:" + out
-        #print x['command']
+
+
+        assert_string = get_assertion_string(args.analyzer_command)
+        abs_file_path = get_file_path(args.analyzer_command)
+        preproc_name = get_preprocessed_repro_file(abs_file_path, args.analyzer_command)
+        reduced_orig_file_name = reduce(preproc_name, assert_string, args.analyzer_command, args.j)
+
+
+
+
+        #prepare_all_cmd_for_ctu.prepare(pathOptions)
+        for x in compile_cmd:
+            if not (str(x['file']).endswith('.c') or str(x['file']).endswith('.cpp')):
+                continue
+            reduce_dep(str(x['file']), assert_string, args.analyzer_command, reduced_orig_file_name)
+
+            if os.stat(str(x['file'])).st_size != 0:
+                prepare_all_cmd_for_ctu.prepare(pathOptions)
+
+            #print get_preprocess_cmd(x['command'])
+            #out, err = preproc.communicate()
+            #print err + " :Err, Out:" + out
+            #print x['command']
 
 
 if __name__ == '__main__':
