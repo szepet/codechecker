@@ -16,19 +16,21 @@ import prepare_compiler_target
 import prepare_analyzer_cmd
 
 
-def execute(cmd):
-    print("Executing command: " + ' '.join(cmd))
+def execute(cmd, verbose = True):
+    if verbose:
+        print("Executing command: " + ' '.join(cmd))
     try:
         proc = subprocess.Popen(cmd,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         out, err = proc.communicate()
-
-        print("stdout:\n\n" + out.decode("utf-8"))
-        print("stderr:\n\n" + err.decode("utf-8"))
+        if verbose:
+            print("stdout:\n\n" + out.decode("utf-8"))
+            print("stderr:\n\n" + err.decode("utf-8"))
 
         if proc.returncode != 0:
-            print('Unsuccessful run: "' + ' '.join(cmd) + '"')
+            if verbose:
+                print('Unsuccessful run: "' + ' '.join(cmd) + '"')
             raise Exception("Unsuccessful run of command.")
         return out
     except OSError:
