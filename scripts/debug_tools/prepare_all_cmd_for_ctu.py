@@ -141,6 +141,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--clang_plugin_path', default=None,
         help="Path to the used clang plugin.")
+    args = parser.parse_args()
     # change the paths to absolute
     args.sources_root = os.path.abspath(args.sources_root)
     prepare(PathOptions(
