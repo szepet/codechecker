@@ -114,6 +114,20 @@ def add_assert_cond(ctu_analyze_fail_cond, assert_string):
     return ctu_analyze_fail_cond
 
 
+def run_creduce(conditions, file_to_reduce, num_threads):
+    # writing the test script for creduce
+    creduce_test_name = 'creduce_test.sh'
+    with open(creduce_test_name, 'w') as test:
+        test.write("#!/bin/bash\n")
+        test.write(' >/dev/null 2>&1 &&\\\n'.join(conditions))
+    # make it executable
+    st = os.stat(creduce_test_name)
+    os.chmod(creduce_test_name, st.st_mode | stat.S_IEXEC)
+    subprocess.call(['creduce', creduce_test_name,
+                     file_to_reduce, '--n', str(num_threads)],
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
 def reduce_main(reduce_file_name, assert_string, analyzer_command_file, num_threads, stdflag):
     conditions = []
     compilable_cond = get_compilable_cond(stdflag, reduce_file_name)
@@ -125,69 +139,11 @@ def reduce_main(reduce_file_name, assert_string, analyzer_command_file, num_thre
 
     ctu_analyze_fail_cond = add_assert_cond(ctu_analyze_fail_cond, assert_string)
     conditions.append(' '.join(ctu_analyze_fail_cond))
-
-    print "WRITING CREDUCE TEST_SH"
     
-    # writing the test script for creduce
-    creduce_test_name = 'creduce_test.sh'
-    with open(creduce_test_name, 'w') as test:
-        test.write("#!/bin/bash\n")
-        test.write(' >/dev/null 2>&1 &&\\\n'.join(conditions))
-    # make it executable
-    st = os.stat(creduce_test_name)
-    os.chmod(creduce_test_name, st.st_mode | stat.S_IEXEC)
-    subprocess.call(['creduce', creduce_test_name,
-                     reduce_file_name, '--n', str(num_threads)])
-
-    return reduce_file_name
+    run_creduce(conditions, reduce_file_name, num_threads)
 
 
-def reduce_dep(dep_file_abs_path, assert_string, analyzer_command_file, reduced_orig_file_name, stdflag):
-    reduce_file_name = os.path.basename(dep_file_abs_path)
-
-    conditions = []
-
-    compilable_cond = get_compilable_cond(stdflag, reduce_file_name)
-    conditions.append(' '.join(compilable_cond))
-
-    ast_dump_cond = get_ast_dump_cond(stdflag, dep_file_abs_path, reduce_file_name)
-    conditions.append(' '.join(ast_dump_cond))
-
-    with open(analyzer_command_file, 'r') as f:
-        ctu_analyze_fail_cond = f.read().split(" ")
-    ctu_analyze_fail_cond[-1] = os.path.abspath(reduced_orig_file_name)
-    ctu_pattern = re.compile("xtu|ctu|analyzer-config")
-    #normal_analyze_cond = []
-    #for x in ctu_analyze_fail_cond:
-    #    if not ctu_pattern.search(x):
-    #        normal_analyze_cond.append(x)
-    #    else:
-    #        normal_analyze_cond = normal_analyze_cond[:-1]
-    #conditions.append(' '.join(normal_analyze_cond))
-    if assert_string:
-        assert_string = assert_string.replace('\"', '\\\"').replace('`', '\\`')
-        match_condition = ['grep', '-F', '\"' + assert_string + '\"']
-        piping = ['2>&1', '>/dev/null', '|']
-        ctu_analyze_fail_cond.extend(piping)
-        ctu_analyze_fail_cond.extend(match_condition)
-    else:
-        ctu_analyze_fail_cond.insert(0, '!')
-
-    ctu_analyze_fail_cond.insert(2, '-Werror=odr')
-
-    conditions.append(' '.join(ctu_analyze_fail_cond))
-# writing the test script for creduce
-    creduce_test_name = 'creduce_test.sh'
-    with open(creduce_test_name, 'w') as test:
-        test.write("#!/bin/bash\n")
-        test.write(' >/dev/null 2>&1 &&\\\n'.join(conditions))
-    st = os.stat(creduce_test_name)
-    os.chmod(creduce_test_name, st.st_mode | stat.S_IEXEC)
-    subprocess.call(['creduce', creduce_test_name,
-                     dep_file_abs_path, '--n', '1'])
-
-
-def reduce_dep2(dep_file_abs_path, assert_string, analyzer_command_file, reduced_main_file_name, stdflag):
+def reduce_dep(dep_file_abs_path, assert_string, analyzer_command_file, reduced_main_file_name, stdflag):
     reduce_file_name = os.path.basename(dep_file_abs_path)
 
     conditions = []
@@ -201,18 +157,7 @@ def reduce_dep2(dep_file_abs_path, assert_string, analyzer_command_file, reduced
     ctu_analyze_fail_cond = add_assert_cond(ctu_analyze_fail_cond, assert_string)
     conditions.append(' '.join(ctu_analyze_fail_cond))
 
-# writing the test script for creduce
-    creduce_test_name = 'creduce_test.sh'
-    with open(creduce_test_name, 'w') as test:
-        test.write("#!/bin/bash\n")
-        test.write(' >/dev/null 2>&1 &&\\\n'.join(conditions))
-
-    st = os.stat(creduce_test_name)
-    os.chmod(creduce_test_name, st.st_mode | stat.S_IEXEC)
-    subprocess.call(['creduce', creduce_test_name,
-                     dep_file_abs_path, '--n', '1'])
-
-
+    run_creduce(conditions, reduce_file_name, 1)
 
 def get_new_cmd(old_cmd, file_dir_path):
     old_cmd = old_cmd.split(" ")
@@ -328,7 +273,6 @@ def main():
         help="The output dir which contains the reduced files reproducing the bug.")
     args = parser.parse_args()
     # change the paths to absolute
-    args.sources_root = os.path.abspath(args.sources_root)
     repro_zip = os.path.abspath(args.repro_zip)
     output_dir = os.path.abspath(args.o)
     pathOptions = prepare_all_cmd_for_ctu.PathOptions(
@@ -350,17 +294,27 @@ def main():
 
     # unzip
     os.chdir(os.path.dirname(repro_zip))
+    args.sources_root = os.path.abspath(args.sources_root)
+    print(os.getcwd())
     if args.verbose:
         print("Reducing test case from zip file: " + repro_zip)
 
     
+    for file_name in os.listdir(os.getcwd()):
+        if 'zip' in file_name or os.path.basename(output_dir) == file_name:
+            continue
+        if os.path.isfile(file_name):
+            os.remove(file_name)
+        else:
+            shutil.rmtree(file_name)
+
     if args.verbose:
         print('unzip reproduction files')
-    #try:
-    #    output = subprocess.check_output(['timeout', '3', 'unzip', repro_zip], stderr=subprocess.STDOUT)
-    #except subprocess.CalledProcessError, e:
-    #    print('error: unzip command has failed')
-    #    return
+    try:
+        output = subprocess.check_output(['timeout', '3', 'unzip', repro_zip], stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError, e:
+        print('error: unzip command has failed')
+        return
 
     if args.verbose:
         print('prepare commands for ctu')
@@ -392,16 +346,17 @@ def main():
     # make it runnable     
     st = os.stat(analyzer_command_file)
     os.chmod(analyzer_command_file, st.st_mode | stat.S_IEXEC)
-    # cleanup
+    
     if args.verbose:
         print('cleanup')
-    #for file_name in os.listdir(os.getcwd()):
-    #    if 'zip' in file_name or os.path.basename(output_dir) == file_name:
-    #        continue
-    #    if os.path.isfile(file_name):
-    #        os.remove(file_name)
-    #    else:
-    #        shutil.rmtree(file_name)
+    # cleanup
+    for file_name in os.listdir(os.getcwd()):
+        if 'zip' in file_name or os.path.basename(output_dir) == file_name:
+            continue
+        if os.path.isfile(file_name):
+            os.remove(file_name)
+        else:
+            shutil.rmtree(file_name)
 
     os.chdir(output_dir)
     if args.verbose:
@@ -421,8 +376,7 @@ def main():
         std_flag = get_std_flag(f.read())
 
     print('Starting to reduce analyzed file: ' + analyzed_file)
-    shutil.copyfile('../dude2/' + analyzed_file_name, analyzed_file_name)
-    #reduce_main(analyzed_file_name, assert_string, analyzer_command_file, args.j, std_flag)
+    reduce_main(analyzed_file_name, assert_string, analyzer_command_file, args.j, std_flag)
 
     print('Starting to reduce dependent files.')
     cmd_to_remove = set()
@@ -433,7 +387,7 @@ def main():
         std_flag = get_std_flag(cmd['command'])
         if args.verbose:
             print('Reducing dependent file: ' + cmd['file'])
-        reduce_dep2(cmd['file'], assert_string, analyzer_command_file, analyzed_file_name, std_flag)
+        reduce_dep(cmd['file'], assert_string, analyzer_command_file, analyzed_file_name, std_flag)
 
         if os.stat(cmd['file']).st_size == 0:
             os.remove(cmd['file'])
@@ -441,10 +395,17 @@ def main():
         else:
             create_ctu_dir("compile_commands.json")
 
-    #remove unnecessary commands from compile_commands_json
+    # remove unnecessary commands from compile_commands_json
     compile_cmds = [x for x in compile_cmds if x['command'] not in cmd_to_remove]
     with open(os.path.join(output_dir, 'compile_commands.json'),'w') as out_cc:
         out_cc.write(json.dumps(compile_cmds, indent=4))
+
+    # cleanup
+    for file_name in os.listdir(os.getcwd()):
+        if not re.search(file_name, '.orig$|creduce_test'):
+            continue
+        assert(os.path.isfile(file_name))
+        os.remove(file_name)
 
     print("Reduced test cases can be found in directory: " + output_dir)
 
