@@ -16,6 +16,7 @@ import prepare_all_cmd_for_ctu
 class DummyFile(object):
     def write(self, x): pass
 
+
 @contextlib.contextmanager
 def nostdout():
     save_stdout = sys.stdout
@@ -40,30 +41,13 @@ def get_std_flag(str):
 
 def create_ctu_dir(compile_cmds_file):
     prepare_all_cmd_for_ctu.execute(["CodeChecker", "analyze", "--ctu-collect",
-                                       compile_cmds_file, "-o", "cc_files"], False)
+                                    compile_cmds_file, "-o", "cc_files"],
+                                    False)
 
 
 def isCppOrCFile(file_name):
     c_pattern = re.compile('\.c$|\.cpp$|\.cxx$')
     return c_pattern.search(file_name)
-
-
-def get_preprocessed_repro_file(abs_file_path, analyzer_command_file):
-    with open(analyzer_command_file, 'r') as f:
-        cmd = f.read().split(" ")
-        param_pattern = re.compile("-I|-D")
-        prepoc_params = [x for x in cmd if param_pattern.match(x)]
-        preproc = \
-            subprocess.Popen(["gcc", "-E"] + prepoc_params + [abs_file_path],
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, _ = preproc.communicate()
-        filename = abs_file_path.split('/')[-1]
-        # assuming exactly one dot (.) in the file name
-        prepoc_name = filename.split('.')[0] + "_preproc." + \
-            filename.split('.')[1]
-    with open(prepoc_name, 'w') as preproc_file:
-        preproc_file.write(out)
-    return prepoc_name
 
 
 def get_assertion_string(analyzer_command_file):
@@ -77,14 +61,16 @@ def get_assertion_string(analyzer_command_file):
     return assert_match.group(0)
 
 
-def get_compilable_cond(stdflag, file_name):
-    return ['gcc', '-c', '-Werror', stdflag, file_name]
+def get_compilable_cond(clang, stdflag, file_name):
+    return [clang, '-c', '-Werror', stdflag, file_name]
 
 
-def get_ast_dump_cond(stdflag, file_abs_path, file_name):
-    ast_dump_path = os.path.join(os.path.abspath('./cc_files'), 'ctu-dir', 'x86_64', 'ast')
+def get_ast_dump_cond(clang, stdflag, file_abs_path, file_name):
+    ast_dump_path = os.path.join(os.path.abspath('./cc_files'),
+                                 'ctu-dir', 'x86_64', 'ast')
     ast_dump_path = os.path.join(ast_dump_path, '.' + file_abs_path + '.ast')
-    return ['clang', stdflag, '-Xclang', '-emit-pch', '-o', ast_dump_path, '-c', file_name]
+    return [clang, stdflag, '-Xclang', '-emit-pch', '-o', ast_dump_path, '-c',
+            file_name]
 
 
 def get_normal_analyze_cond(ctu_analyze_fail_cond):
@@ -100,7 +86,7 @@ def get_normal_analyze_cond(ctu_analyze_fail_cond):
 
 def get_ctu_analyze_fail_cond(cmd_file, file_path):
     with open(cmd_file, 'r') as f:
-        ctu_analyze_fail_cond = f.read().split(" ")   
+        ctu_analyze_fail_cond = f.read().split(" ")
     ctu_analyze_fail_cond[-1] = file_path
     return ctu_analyze_fail_cond
 
@@ -124,16 +110,18 @@ def run_creduce(conditions, file_to_reduce, num_threads):
     st = os.stat(creduce_test_name)
     os.chmod(creduce_test_name, st.st_mode | stat.S_IEXEC)
     subprocess.call(['creduce', creduce_test_name,
-                     file_to_reduce, '--n', str(num_threads)],
-                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    file_to_reduce, '--n', str(num_threads)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
-def reduce_main(reduce_file_name, assert_string, analyzer_command_file, num_threads, stdflag):
+def reduce_main(reduce_file_name, assert_string, analyzer_command_file,
+                num_threads, clang, stdflag):
     conditions = []
-    compilable_cond = get_compilable_cond(stdflag, reduce_file_name)
+    compilable_cond = get_compilable_cond(clang, stdflag, reduce_file_name)
     conditions.append(' '.join(compilable_cond))
 
-    ctu_analyze_fail_cond = get_ctu_analyze_fail_cond(analyzer_command_file, reduce_file_name)
+    ctu_analyze_fail_cond = get_ctu_analyze_fail_cond(analyzer_command_file,
+                                                      reduce_file_name)
     normal_analyze_cond = get_normal_analyze_cond(ctu_analyze_fail_cond)
     conditions.append(' '.join(normal_analyze_cond))
 
@@ -143,14 +131,14 @@ def reduce_main(reduce_file_name, assert_string, analyzer_command_file, num_thre
     run_creduce(conditions, reduce_file_name, num_threads)
 
 
-def reduce_dep(dep_file_abs_path, assert_string, analyzer_command_file, reduced_main_file_name, stdflag):
+def reduce_dep(dep_file_abs_path, assert_string, analyzer_command_file, reduced_main_file_name, clang, stdflag):
     reduce_file_name = os.path.basename(dep_file_abs_path)
 
     conditions = []
-    compilable_cond = get_compilable_cond(stdflag, reduce_file_name)
+    compilable_cond = get_compilable_cond(clang, stdflag, reduce_file_name)
     conditions.append(' '.join(compilable_cond))
 
-    ast_dump_cond = get_ast_dump_cond(stdflag, dep_file_abs_path, reduce_file_name)
+    ast_dump_cond = get_ast_dump_cond(clang, stdflag, dep_file_abs_path, reduce_file_name)
     conditions.append(' '.join(ast_dump_cond))
 
     ctu_analyze_fail_cond = get_ctu_analyze_fail_cond(analyzer_command_file, os.path.abspath(reduced_main_file_name))
@@ -179,11 +167,11 @@ def get_new_cmd(old_cmd, file_dir_path):
 def get_new_analyzer_cmd(old_cmd, file_dir_path):
     old_cmd = old_cmd.split(" ")
     new_cmd = []
-    param_pattern = re.compile("-I|-D")
+    param_pattern_include = re.compile("-I|-D")
     param_pattern2 = re.compile("-isystem")
     corresp = False
     for x in old_cmd:
-        if param_pattern.match(x):
+        if param_pattern_include.match(x):
             continue
         if param_pattern2.match(x):
             corresp = True
@@ -203,24 +191,6 @@ def get_new_analyzer_cmd(old_cmd, file_dir_path):
     return ' '.join(new_cmd)
 
 
-def get_preprocessed_repro_file(abs_file_path, analyzer_command_file):
-    with open(analyzer_command_file, 'r') as f:
-        cmd = f.read().split(" ")
-        param_pattern = re.compile("-I|-D")
-        prepoc_params = [x for x in cmd if param_pattern.match(x)]
-        preproc = \
-            subprocess.Popen(["gcc", "-E"] + prepoc_params + [abs_file_path],
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, _ = preproc.communicate()
-        filename = abs_file_path.split('/')[-1]
-        # assuming exactly one dot (.) in the file name
-        prepoc_name = filename.split('.')[0] + "_preproc." + \
-            filename.split('.')[1]
-    with open(prepoc_name, 'w') as preproc_file:
-        preproc_file.write(out)
-    return prepoc_name
-
-
 def get_preprocess_cmd(comp_cmd, repro_dir, filename):
     preproc_cmd = str(comp_cmd.decode("utf-8")).split(' ')
     preproc_cmd = filter(lambda x: not re.match('-c', x), preproc_cmd)
@@ -233,7 +203,9 @@ def get_preprocess_cmd(comp_cmd, repro_dir, filename):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Reduces the reproduction files for CTU bugs.')
+        description='Reduces the reproduction files for CTU assertions \
+        (assertions only!) based on the repro zip file which is generated \
+        by CodeChecker.')
     parser.add_argument(
         '--analyzer-command',
         default='./analyzer-command_DEBUG',
@@ -275,6 +247,7 @@ def main():
     # change the paths to absolute
     repro_zip = os.path.abspath(args.repro_zip)
     output_dir = os.path.abspath(args.o)
+    sys.path.insert(os.path.dirname(args.clang), 0)
     pathOptions = prepare_all_cmd_for_ctu.PathOptions(
             args.sources_root,
             args.clang,
@@ -336,11 +309,11 @@ def main():
     # uniquing compile_commands
     compile_cmds = {x['command']: x for x in compile_cmds}.values()
     # writing compile commands to output dir
-    with open(os.path.join(output_dir, 'compile_commands.json'),'w') as out_cc:
+    with open(os.path.join(output_dir, 'compile_commands.json'), 'w') as out_cc:
         out_cc.write(json.dumps(compile_cmds, indent=4))
     # writing compile commands to output dir
     with open(args.analyzer_command, 'r') as f:
-        with open(analyzer_command_file,'w') as f2:
+        with open(analyzer_command_file, 'w') as f2:
             f2.write(get_new_analyzer_cmd(f.read(), output_dir))
     
     # make it runnable     
@@ -361,7 +334,7 @@ def main():
     os.chdir(output_dir)
     if args.verbose:
         print('creating ctu dir')
-    create_ctu_dir("compile_commands.json")
+    create_ctu_dir('compile_commands.json')
 
     assert_string = get_assertion_string(analyzer_command_file)
     if args.verbose:
@@ -376,7 +349,7 @@ def main():
         std_flag = get_std_flag(f.read())
 
     print('Starting to reduce analyzed file: ' + analyzed_file)
-    reduce_main(analyzed_file_name, assert_string, analyzer_command_file, args.j, std_flag)
+    reduce_main(analyzed_file_name, assert_string, analyzer_command_file, args.j, args.clang, std_flag)
 
     print('Starting to reduce dependent files.')
     cmd_to_remove = set()
@@ -387,7 +360,7 @@ def main():
         std_flag = get_std_flag(cmd['command'])
         if args.verbose:
             print('Reducing dependent file: ' + cmd['file'])
-        reduce_dep(cmd['file'], assert_string, analyzer_command_file, analyzed_file_name, std_flag)
+        reduce_dep(cmd['file'], assert_string, analyzer_command_file, analyzed_file_name, args.clang, std_flag)
 
         if os.stat(cmd['file']).st_size == 0:
             os.remove(cmd['file'])
@@ -397,7 +370,7 @@ def main():
 
     # remove unnecessary commands from compile_commands_json
     compile_cmds = [x for x in compile_cmds if x['command'] not in cmd_to_remove]
-    with open(os.path.join(output_dir, 'compile_commands.json'),'w') as out_cc:
+    with open(os.path.join(output_dir, 'compile_commands.json'), 'w') as out_cc:
         out_cc.write(json.dumps(compile_cmds, indent=4))
 
     # cleanup
