@@ -17,6 +17,7 @@ import prepare_analyzer_cmd
 
 
 def execute(cmd, verbose = True):
+    verbose = True
     if verbose:
         print("Executing command: " + ' '.join(cmd))
     try:
