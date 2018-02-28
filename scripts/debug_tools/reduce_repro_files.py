@@ -308,8 +308,8 @@ def main():
 
     if args.verbose:
         print('prepare commands for ctu')
-    #with nostdout():
-    prepare_all_cmd_for_ctu.prepare(pathOptions)
+    with nostdout():
+        prepare_all_cmd_for_ctu.prepare(pathOptions)
 
     compile_cmds = json.load(open('./compile_cmd_DEBUG.json'))
     for cmd in compile_cmds:
